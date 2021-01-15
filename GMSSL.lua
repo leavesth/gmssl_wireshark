@@ -279,6 +279,21 @@ function parseClientHello(tvb, pinfo, tree)
 		subtree:add(fields.helloCompessMethod, tvb(offset, compressMethodLen))
 		offset = offset + compressMethodLen
 	end
+	if (offset >= tvb:len())
+	then
+		return offset
+	end
+	if (tvb:len() - offset > 4)
+	then
+		local content = tvb(offset, 1):uint()
+		local ver = tvb(offset + 1, 2):uint()
+		--Next Content is Not Extensions. Also Handshake Protocol
+		if (content == 0x16 and ver == 0x0101)
+		then
+			return offset
+		end
+	end
+
 	local extensionLen = tvb(offset, 2):uint()	
 	subtree:add(fields.helloExtensionLen, tvb(offset, 2))
 	offset = offset + 2
@@ -339,6 +354,22 @@ function parseServerHello(tvb, pinfo, tree)
 		offset = offset + compressMethodLen
 	end
 
+	if (offset >= tvb:len())
+	then
+		return offset;
+	end
+	-- Next Maybe Not Extensions.
+	if (tvb:len() - offset > 4)
+	then
+		local content = tvb(offset, 1):uint()
+		local ver = tvb(offset + 1, 2):uint()
+		--Next Content is Not Extensions. Also Handshake Protocol
+		if (content == 0x16 and ver == 0x0101)
+		then
+			return offset
+		end
+	end
+	
 	local extensionLen = tvb(offset, 2):uint()	
 	subtree:add(fields.helloExtensionLen, tvb(offset, 2))
 	offset = offset + 2
