@@ -10,6 +10,9 @@ local GMSSL = Proto(NAME, "GMSSL Protocol")
 local cuiteTable = {}  -- Cipher Suite Tables
 local extenTable = {}  -- Extensions Tables
 local compMethod = {}  -- Compression Methods Tables
+local cipherKeyExgMthod = {} -- Cipher Key Exchange Method. For eg. DH/ECDH/RSA/PSA...
+
+local g_cipherSuite = 0 -- g_cipherSuite Is the server selected CipherSuiteID
 
 local fields = GMSSL.fields
 fields.ContentType = ProtoField.uint8 (NAME .. ".ContentType", "ContentType")
@@ -19,15 +22,13 @@ fields.length = ProtoField.uint16(NAME .. ".length", "Length")
 fields.type16 = ProtoField.uint16(NAME .. ".Type16", "Type")
 fields.length16 = ProtoField.uint16(NAME .. ".Length16", "Length")
 
-fields.handshakeProtol = ProtoField.string(NAME .. ".HandShakeProtol", "Handhake Protocol: ")
-fields.handshakeType = ProtoField.string(NAME .. ".HandShakeType", "Handshake Type: ")
+fields.handshakeProtol = ProtoField.string(NAME .. ".HandShakeProtol", "Handshake Protocol")
+fields.handshakeType = ProtoField.string(NAME .. ".HandShakeType", "Handshake Type")
 
-fields.helloType = ProtoField.uint8(NAME .. ".Hello.Type", "Hello")
-
-fields.helloTime = ProtoField.uint32(NAME .. ".Hello.Time", "Time")
-fields.helloRand = ProtoField.bytes(NAME .. ".Hello.Random", "Random")
-fields.helloSesIdLen = ProtoField.uint8(NAME .. ".Hello.SesIdLen", "SessionIdLen")
-fields.helloSesId = ProtoField.bytes(NAME .. ".Hello.SesId", "SessionId")
+fields.helloTime = ProtoField.uint32(NAME .. ".Time", "Time")
+fields.helloRand = ProtoField.bytes(NAME .. ".Random", "Random")
+fields.helloSesIdLen = ProtoField.uint8(NAME .. ".SesIdLen", "SessionIdLen")
+fields.helloSesId = ProtoField.bytes(NAME .. ".SesId", "SessionId")
 
 fields.cipherSuiteLen = ProtoField.uint16(NAME .. ".CipherSuiteLen", "Cipher Suites Length")
 fields.cipherSuite = ProtoField.string(NAME .. ".CipherSuite", "Cipher Suites")
@@ -37,42 +38,23 @@ fields.compessMethodLen = ProtoField.uint8(NAME .. ".CompressMethodLen", "Compre
 fields.compessMethods = ProtoField.string(NAME .. ".CompressMethod", "Compress Methods")
 fields.compessMethod = ProtoField.string(NAME .. ".CompressMethod", "Compress Method")
 
-fields.helloExtensionLen = ProtoField.uint16(NAME .. ".Hello.ExtensionLen", "ExtensionLen")
-fields.helloExtension = ProtoField.bytes(NAME .. ".Hello.Extension", "Extension")
-
-fields.extensionMain = ProtoField.string(NAME .. ".Hello.extensionMain", "Extension")
+fields.helloExtensionLen = ProtoField.uint16(NAME .. ".ExtensionLen", "ExtensionLen")
+fields.helloExtension = ProtoField.bytes(NAME .. ".Extension", "Extension")
+fields.extensionMain = ProtoField.string(NAME .. ".extensionMain", "Extension")
 
 fields.certNode = ProtoField.string(NAME .. ".CertNode", "Certificate")
 fields.certLen = ProtoField.uint24(NAME .. ".CertLen", "Certificate Length")
 fields.cert = ProtoField.bytes(NAME .. ".Cert", "Cert")
+fields.certReq = ProtoField.bytes(NAME .. ".CertReq", "CertReq")
+fields.certVerifyData = ProtoField.bytes(NAME .. ".CertVerifyData", "CertVerifyData")
 
-fields.keyExchangeLen = ProtoField.uint24(NAME .. ".Hello.KeyExchangeLen", "KeyExchangeLen")
-fields.keyExchange = ProtoField.bytes(NAME .. ".Hello.KeyExchange", "KeyExchange")
+fields.keyExchange = ProtoField.bytes(NAME .. ".KeyExchange", "KeyExchange")
+fields.keyExchangePara = ProtoField.string(NAME .. "KeyExchangePara", "KeyExchangePara")
 
-fields.helloDoneLeng = ProtoField.uint24(NAME .. ".Hello.ServerHelloDoneLen", "Length")
-
-fields.certReqLen = ProtoField.uint24(NAME .. ".Hello.CertReqLen", "Length")
-fields.certReq = ProtoField.bytes(NAME .. ".Hello.CertReq", "CertReq")
-
-fields.clientKeyExchange = ProtoField.uint8(NAME .. ".Hello.ClientKeyExchange", "ClientKeyExchange")
-fields.clientKeyExchangeLen = ProtoField.uint24(NAME .. ".Hello.ClientKeyExchange", "ClientKeyExchangeLen")
-fields.clientKeyExchangeData = ProtoField.bytes(NAME .. ".Hello.ClientKeyExchangeData", "ClientKeyExchangeData")
-
-fields.certVerify = ProtoField.uint8(NAME .. ".Hello.CertVerify", "CertVerify")
-fields.certVerifyLen = ProtoField.uint24(NAME .. ".Hello.CertVerifyLen", "CertVerifyLen")
-fields.certVerifyData = ProtoField.bytes(NAME .. ".Hello.CertVerifyData", "CertVerifyData")
-
-fields.changeCipherSpecMessage = ProtoField.uint8(NAME .. ".Hello.ChangeCipherSpecMessage", "ChangeCipherSpecMessage")
-
-fields.applicationDataLen = ProtoField.uint24(NAME .. ".Hello.ApplicationDataLen", "ApplicationDataLen")
-fields.applicationData = ProtoField.bytes(NAME .. ".Hello.ApplicationData", "ApplicationData")
-
-fields.encryptedHelloData = ProtoField.bytes(NAME .. ".EncryptedHelloData", "EncryptedHelloData")
-
+fields.changeCipherSpecMessage = ProtoField.uint8(NAME .. ".ChangeCipherSpecMessage", "ChangeCipherSpecMessage")
+fields.applicationData = ProtoField.bytes(NAME .. ".ApplicationData", "ApplicationData")
+fields.encryptedHelloData = ProtoField.string(NAME .. ".EncryptedHelloData", "Handshake Protocol")
 fields.alertData = ProtoField.bytes(NAME .. ".AlertData", "AlertData")
-
---local clientHello = GMSSL.fields.clientHello
-
 
 -- dissect packet
 function GMSSL.dissector (tvb, pinfo, tree)
@@ -161,11 +143,11 @@ function GMSSL.dissector (tvb, pinfo, tree)
 			then
 				subtree:append_text(": Encrypted HandShake Message")
 				infoMsg = infoMsg .. "Encrypted HandShake Message;"
-				subtree:add(fields.encryptedHelloData, tvb(offset, type:uint()))
+				subtree:add(fields.encryptedHelloData, tvb(offset, type:uint()), "Encrypted Handshake Message")
 				offset = offset + type:uint()
 				changeCipherOk = false
 			else
-				-- parse types.		
+				-- parse types.
 				type = tvb(offset, 1)
 				if (type:uint() == 1)
 				then
@@ -321,8 +303,8 @@ function parseServerHello(tvb, pinfo, tree)
 		subtree:add(fields.helloSesId, tvb(offset, sessionIdLen))
 		offset = offset + sessionIdLen
 	end
-	local cipherSuite = tvb(offset, 2):uint()
-	subtree:add(fields.cipherSuite, tvb(offset, 2), string.format("%s (0x%04X)", getCipherSuite(cipherSuite), cipherSuite))
+	g_cipherSuite = tvb(offset, 2):uint() -- g_cipherSuite Is the server selected CipherSuiteID
+	subtree:add(fields.cipherSuite, tvb(offset, 2), string.format("%s (0x%04X)", getCipherSuite(g_cipherSuite), g_cipherSuite))
 	offset = offset + 2
 	
 	-- selected compress methods.
@@ -373,7 +355,6 @@ function parseCertficate(tvb, pinfo, tree)
 	subtree:add(fields.handshakeType, type, string.format("Certificate (%d)", type:uint()))
 	subtree:add(fields.length, totalLen)
 
-
 	local cert0Len = tvb(offset, 3):uint()
 	subtree:add(fields.certLen, tvb(offset, 3))
 	offset = offset + 3
@@ -381,15 +362,13 @@ function parseCertficate(tvb, pinfo, tree)
 	local paseLens = 0
 	while(paseLens < cert0Len)
 	do
-		-- parse one certs.
-		
+		-- parse one certs.		
 		local onecertLen = tvb(offset, 3):uint()
 		local stree = subtree:add(fields.certNode, tvb(offset, onecertLen), string.format("(%d bytes)", onecertLen))
 		stree:add(fields.certLen, tvb(offset, 3))
 		offset = offset + 3
 		stree:add(fields.cert, tvb(offset, onecertLen))
 		offset = offset + onecertLen
-
 		paseLens = paseLens + 3 + onecertLen
 	end
 	return offset
@@ -397,75 +376,82 @@ end
 
 function parseServerKeyExchange(tvb, pinfo, tree)
 	local offset = 0
-	--local subtree = tree:add_le("ServerKeyExchange")
-	
 	local type = tvb(offset, 1)
-	local lengs = tvb(offset + 1, 3):uint()
+	local lengs = tvb(offset + 1, 3)
 	offset = offset + 4
 
-	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs), "Server Key Exchange")
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs:uint()), "Server Key Exchange")
 
-	subtree:add(fields.handshakeType, type, string.format("ServerKeyExchange (%d)", type:uint()))
+	subtree:add(fields.handshakeType, type, string.format("Server Key Exchange (%d)", type:uint()))
 	subtree:add(fields.length, lengs)
 
-	subtree:add(fields.keyExchange, tvb(offset, lengs))
-	offset = offset + lengs
-	return offset
-end
-
-function parseServerHelloDone(tvb, pinfo, tree)
-	local offset = 0
-	local subtree = tree:add_le("ServerHelloDone")
-	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": ServerHelloDone")
-	offset = offset + 1
-	local lengs = tvb(offset, 3):uint()
-	subtree:add(fields.helloDoneLeng, tvb(offset, 3)):append_text(": Length")
-	offset = offset + 3
+	-- Server Key Exchange support DH/ECDH/PSK/RSA/ECJPAKE
+	parseKeyExchangeByCuite(tvb(offset, lengs:uint()):tvb(), pinfo, subtree)
+	offset = offset + lengs:uint()
 	return offset
 end
 
 function parseCertficateRequest(tvb, pinfo, tree)
+
 	local offset = 0
-	local subtree = tree:add_le("CertficateRequest")
 	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": CertficateRequest")
-	offset = offset + 1
-	local lengs = tvb(offset, 3):uint()
-	subtree:add(fields.certReqLen, tvb(offset, 3)):append_text(": Length")
-	offset = offset + 3
-	subtree:add(fields.certReq, tvb(offset, lengs)):append_text(": CertReq")
-	offset = offset + lengs
+	local lengs = tvb(offset + 1, 3)
+	offset = offset + 4
+
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs:uint()), "CertficateRequest")
+	subtree:add(fields.handshakeType, type, string.format("CertficateRequest (%d)", type:uint()))
+	subtree:add(fields.length, lengs)
+
+	subtree:add(fields.certReq, tvb(offset, lengs:uint()))
+	offset = offset + lengs:uint()
+	return offset
+end
+
+function parseServerHelloDone(tvb, pinfo, tree)
+
+	local offset = 0
+	local type = tvb(offset, 1)
+	local lengs = tvb(offset + 1, 3)
+	offset = offset + 4
+
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs:uint()), "Server Hello Done")
+	subtree:add(fields.handshakeType, type, string.format("Server Hello Done (%d)", type:uint()))
+	subtree:add(fields.length, lengs)
+
+	offset = offset + lengs:uint()
 	return offset
 end
 
 function parseClientKeyExchange(tvb, pinfo, tree)
-	local offset = 0
-	local subtree = tree:add_le("ClientKeyExchange")
-	local type = tvb(offset, 1)
-	subtree:add(fields.clientKeyExchange, type):append_text(": ClientKeyExchange")
-	offset = offset + 1
-	local lengs = tvb(offset, 3):uint()
-	subtree:add(fields.clientKeyExchangeLen, tvb(offset, 3)):append_text(": ClientKeyExchangeLen")
-	offset = offset + 3
 
-	subtree:add(fields.clientKeyExchangeData, tvb(offset, lengs)):append_text(": clientKeyExchangeData")
-	offset = offset + lengs
+	local offset = 0
+	local type = tvb(offset, 1)
+	local lengs = tvb(offset + 1, 3)
+	offset = offset + 4
+
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs:uint()), "Client Key Exchange")
+	subtree:add(fields.handshakeType, type, string.format("Client Key Exchange (%d)", type:uint()))
+	subtree:add(fields.length, lengs)
+
+	parseKeyExchangeByCuite(tvb(offset, lengs:uint()):tvb(), pinfo, subtree)
+	
+	offset = offset + lengs:uint()
 	return offset
 end
 
 function parseCertificateverify(tvb, pinfo, tree)
-	local offset = 0
-	local subtree = tree:add_le("CertVerify")
-	local type = tvb(offset, 1)
-	subtree:add(fields.certVerify, type):append_text(": CertVerify")
-	offset = offset + 1
-	local lengs = tvb(offset, 3):uint()
-	subtree:add(fields.certVerifyLen, tvb(offset, 3)):append_text(": CertVerifyLen")
-	offset = offset + 3
 
-	subtree:add(fields.certVerifyData, tvb(offset, lengs)):append_text(": CertVerifyData")
-	offset = offset + lengs
+	local offset = 0
+	local type = tvb(offset, 1)
+	local lengs = tvb(offset + 1, 3)
+	offset = offset + 4
+
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs:uint()), "Certificate Verify")
+	subtree:add(fields.handshakeType, type, string.format("Certificate Verify (%d)", type:uint()))
+	subtree:add(fields.length, lengs)
+
+	subtree:add(fields.certVerifyData, tvb(offset, lengs:uint()))
+	offset = offset + lengs:uint()
 	return offset
 end
 
@@ -541,9 +527,142 @@ function getCipherSuite(cuiteId)
 	return retStr
 end
 
+local KEX_DHE_DSS     = 0x10
+local KEX_DHE_PSK     = 0x11
+local KEX_DHE_RSA     = 0x12
+local KEX_DH_ANON     = 0x13
+local KEX_DH_DSS      = 0x14
+local KEX_DH_RSA      = 0x15
+local KEX_ECDHE_ECDSA = 0x16
+local KEX_ECDHE_PSK   = 0x17
+local KEX_ECDHE_RSA   = 0x18
+local KEX_ECDH_ANON   = 0x19
+local KEX_ECDH_ECDSA  = 0x1a
+local KEX_ECDH_RSA    = 0x1b
+local KEX_KRB5        = 0x1c
+local KEX_PSK         = 0x1d
+local KEX_RSA         = 0x1e
+local KEX_RSA_PSK     = 0x1f
+local KEX_SRP_SHA     = 0x20
+local KEX_SRP_SHA_DSS = 0x21
+local KEX_SRP_SHA_RSA = 0x22
+local KEX_TLS13       = 0x23
+local KEX_ECJPAKE     = 0x24
+local KEX_IBSDH       = 0x90 -- For SM9
+local KEX_IBC         = 0x91 -- For SM9
+-- Parse KeyExchange By g_Cuite
+function parseKeyExchangeByCuite(tvb, pinfo, tree)
+	local offset = 0
+	local kexMethod = cipherKeyExgMthod[g_cipherSuite]
+	if (nil == kexMethod)
+	then
+		kexMethod = 0
+	end
+	if (kexMethod == KEX_DH_ANON or kexMethod == KEX_DH_DSS or kexMethod == KEX_DH_RSA or kexMethod == KEX_DHE_DSS
+	or  kexMethod == KEX_DHE_RSA)
+	then
+		--	KeyEx DH
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("DH")
+	elseif(kexMethod == KEX_ECDH_ANON or kexMethod == KEX_ECDH_ECDSA or kexMethod == KEX_ECDH_RSA 
+	or kexMethod == KEX_ECDHE_ECDSA or kexMethod == KEX_ECDHE_RSA)
+	then
+		--	KeyEx ECDH
+		local subtree = tree:add(fields.keyExchangePara, tvb(0, tvb:len()), "EC Diffie-Hellman Client Params")
+		local parseRet = parseEcParameter(tvb, pinfo, subtree)
+		offset = offset + parseRet
+		if (offset >= tvb:len())
+		then
+			return
+		end
+		parseRet = parseEcPoint(tvb(offset):tvb(), pinfo, subtree)
+		offset = offset + parseRet
+		if (offset >= tvb:len())
+		then
+			return
+		end
+		-- GMSSL Maybe have no signature Algo set.
+		--parseRet = parseSignatureAlgo(tvb(offset), pinfo, subtree)
+		--offset = offset + parseRet
+		parseRet = parseSignature(tvb(offset), pinfo, subtree)
+		offset = offset + parseRet
+	elseif (kexMethod == KEX_PSK)
+	then
+		-- KexEx PSK
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("PSK")
+	elseif (kexMethod == KEX_RSA)
+	then
+		-- KeyEx RSA
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("RSA")
+	elseif (kexMethod == KEX_RSA_PSK)
+	then
+		-- KeyEx RSAPSK
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("RSAPSK")
+	elseif (kexMethod == KEX_ECJPAKE)
+	then
+		-- KEX_ECJPAKE
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("ECJPAKE")
+	else
+		-- Not Regconized Key Exchange Methods.
+		tree:add(fields.keyExchange, tvb(0, tvb:len())):append_text("Can't Regconiaed Key Exchange Methods")
+	end
+end
+
+fields.curveType = ProtoField.uint8(NAME .. ".CurveType", "Curve Type")
+fields.namedCurve = ProtoField.uint16(NAME .. ".NamedCurve", "Named Curve")
+function parseEcParameter(tvb, pinfo, tree)
+	local offset = 0
+	local curve_type = tvb(offset, 1)
+	tree:add(fields.curveType, curve_type)
+	offset = offset + 1
+	if (curve_type:uint() ~= 3)
+	then
+		return offset -- only named_curves are supported
+	end
+	local namedCurve = tvb(offset, 2)
+	tree:add(fields.curveType, namedCurve)
+	offset = offset + 2
+	return offset
+end
+
+-- parse EcPoint, pubkey
+fields.ecPointLen = ProtoField.uint8(NAME .. ".EcPointLen", "Pubkey Length")
+fields.ecPoint = ProtoField.bytes(NAME .. ".EcPoint", "Pubkey")
+function parseEcPoint(tvb, pinfo, tree)
+	local offset = 0
+	local pubkeyLen = tvb(offset, 1)
+	offset = offset + 1
+	tree:add(fields.ecPointLen, pubkeyLen)
+	tree:add(fields.ecPoint,tvb(offset, pubkeyLen:uint()))
+	offset = offset + pubkeyLen:uint()
+	return offset
+end
+-- parse signature
+fields.signatureAlgorithm = ProtoField.uint16(NAME .. ".SignatureAlgorithm", "Signature Algorithm")
+fields.signatureHashAlgorithm = ProtoField.uint8(NAME .. ".SignatureHashAlgorithm", "Signature Hash Algorithm Hash")
+fields.signatureSignAlgorithm = ProtoField.uint8(NAME .. ".SignatureHashAlgorithm", "Signature Hash Algorithm Signature")
+function parseSignatureAlgo(tvb, pinfo, tree)
+	local offset = 0
+
+	local subtree = tree:add(fields.signatureAlgorithm, tvb(offset, 2))
+	subtree:add(fields.signatureHashAlgorithm, tvb(offset, 1))
+	subtree:add(fields.signatureHashAlgorithm, tvb(offset + 1, 1))
+	offset = offset + 2
+	return offset
+end
+fields.signatureLength = ProtoField.uint16(NAME .. ".SignatureLength", "Signature Length")
+fields.signature = ProtoField.bytes(NAME .. ".Signature", "Signature")
+function parseSignature(tvb, pinfo, tree)
+	local offset = 0
+	local signLen = tvb(offset, 2)
+	offset = offset + 2
+	tree:add(fields.signatureLength, signLen)
+	tree:add(fields.signature, tvb(offset, signLen:uint()))
+	offset = offset + signLen:uint()
+	return offset
+end
+
 function initTables()
 	-- Cipher Suite Tables.
-
 	cuiteTable[0x0001] = "TLS_RSA_WITH_NULL_MD5"
     cuiteTable[0x0002] = "TLS_RSA_WITH_NULL_SHA"
     cuiteTable[0x0003] = "TLS_RSA_EXPORT_WITH_RC4_40_MD5"
@@ -1030,6 +1149,342 @@ function initTables()
 	compMethod[0] = "null"
 	compMethod[1] = "DEFLATE"
 	compMethod[64] = "LZS"
+
+	-- Cipher Key Exchange Methods.
+	cipherKeyExgMthod[0x0017] = KEX_DH_ANON
+    cipherKeyExgMthod[0x0018] = KEX_DH_ANON
+    cipherKeyExgMthod[0x0019] = KEX_DH_ANON
+    cipherKeyExgMthod[0x001a] = KEX_DH_ANON
+    cipherKeyExgMthod[0x001b] = KEX_DH_ANON
+    cipherKeyExgMthod[0x0034] = KEX_DH_ANON
+    cipherKeyExgMthod[0x003a] = KEX_DH_ANON
+    cipherKeyExgMthod[0x0046] = KEX_DH_ANON
+    cipherKeyExgMthod[0x006c] = KEX_DH_ANON
+    cipherKeyExgMthod[0x006d] = KEX_DH_ANON
+    cipherKeyExgMthod[0x0089] = KEX_DH_ANON
+    cipherKeyExgMthod[0x009b] = KEX_DH_ANON
+    cipherKeyExgMthod[0x00a6] = KEX_DH_ANON
+    cipherKeyExgMthod[0x00a7] = KEX_DH_ANON
+    cipherKeyExgMthod[0x00bf] = KEX_DH_ANON
+    cipherKeyExgMthod[0x00c5] = KEX_DH_ANON
+    cipherKeyExgMthod[0xc084] = KEX_DH_ANON
+    cipherKeyExgMthod[0xc085] = KEX_DH_ANON
+    --    return KEX_DH_ANON;
+    cipherKeyExgMthod[0x000b] = KEX_DH_DSS
+    cipherKeyExgMthod[0x000c] = KEX_DH_DSS
+    cipherKeyExgMthod[0x000d] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0030] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0036] = KEX_DH_DSS
+    cipherKeyExgMthod[0x003e] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0042] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0068] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0085] = KEX_DH_DSS
+    cipherKeyExgMthod[0x0097] = KEX_DH_DSS
+    cipherKeyExgMthod[0x00a4] = KEX_DH_DSS
+    cipherKeyExgMthod[0x00a5] = KEX_DH_DSS
+    cipherKeyExgMthod[0x00bb] = KEX_DH_DSS
+    cipherKeyExgMthod[0x00c1] = KEX_DH_DSS
+    cipherKeyExgMthod[0xc082] = KEX_DH_DSS
+    cipherKeyExgMthod[0xc083] = KEX_DH_DSS
+    --    return KEX_DH_DSS;
+    cipherKeyExgMthod[0x000e] = KEX_DH_RSA
+    cipherKeyExgMthod[0x000f] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0010] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0031] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0037] = KEX_DH_RSA
+    cipherKeyExgMthod[0x003f] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0043] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0069] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0086] = KEX_DH_RSA
+    cipherKeyExgMthod[0x0098] = KEX_DH_RSA
+    cipherKeyExgMthod[0x00a0] = KEX_DH_RSA
+    cipherKeyExgMthod[0x00a1] = KEX_DH_RSA
+    cipherKeyExgMthod[0x00bc] = KEX_DH_RSA
+    cipherKeyExgMthod[0x00c2] = KEX_DH_RSA
+    cipherKeyExgMthod[0xc07e] = KEX_DH_RSA
+    cipherKeyExgMthod[0xc07f] = KEX_DH_RSA
+    --    return KEX_DH_RSA;
+    cipherKeyExgMthod[0x0011] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0012] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0013] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0032] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0038] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0040] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0044] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0063] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0065] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0066] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x006a] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0087] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x0099] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x00a2] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x00a3] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x00bd] = KEX_DHE_DSS
+    cipherKeyExgMthod[0x00c3] = KEX_DHE_DSS
+    cipherKeyExgMthod[0xc080] = KEX_DHE_DSS
+    cipherKeyExgMthod[0xc081] = KEX_DHE_DSS
+    --    return KEX_DHE_DSS;
+    cipherKeyExgMthod[0x002d] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x008e] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x008f] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x0090] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x0091] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00aa] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00ab] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00b2] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00b3] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00b4] = KEX_DHE_PSK
+    cipherKeyExgMthod[0x00b5] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc090] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc091] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc096] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc097] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc0a6] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc0a7] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc0aa] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xc0ab] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xccad] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xe41c] = KEX_DHE_PSK
+    cipherKeyExgMthod[0xe41d] = KEX_DHE_PSK
+    --    return KEX_DHE_PSK;
+    cipherKeyExgMthod[0x0014] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0015] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0016] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0033] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0039] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0045] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0067] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x006b] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x0088] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x009a] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x009e] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x009f] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x00be] = KEX_DHE_RSA
+    cipherKeyExgMthod[0x00c4] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc07c] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc07d] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc09e] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc09f] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc0a2] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xc0a3] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xccaa] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xe41e] = KEX_DHE_RSA
+    cipherKeyExgMthod[0xe41f] = KEX_DHE_RSA
+    --    return KEX_DHE_RSA;
+    cipherKeyExgMthod[0xc015] = KEX_ECDH_ANON
+    cipherKeyExgMthod[0xc016] = KEX_ECDH_ANON
+    cipherKeyExgMthod[0xc017] = KEX_ECDH_ANON
+    cipherKeyExgMthod[0xc018] = KEX_ECDH_ANON
+    cipherKeyExgMthod[0xc019] = KEX_ECDH_ANON
+    --    return KEX_ECDH_ANON;
+    cipherKeyExgMthod[0xc001] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc002] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc003] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc004] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc005] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc025] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc026] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc02d] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc02e] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc074] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc075] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc088] = KEX_ECDH_ECDSA
+    cipherKeyExgMthod[0xc089] = KEX_ECDH_ECDSA
+    --    return KEX_ECDH_ECDSA;
+    cipherKeyExgMthod[0xc00b] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc00c] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc00d] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc00e] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc00f] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc029] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc02a] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc031] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc032] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc078] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc079] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc08c] = KEX_ECDH_RSA
+    cipherKeyExgMthod[0xc08d] = KEX_ECDH_RSA
+    --    return KEX_ECDH_RSA;
+    cipherKeyExgMthod[0xc006] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc007] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc008] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc009] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc00a] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc023] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc024] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc02b] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc02c] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc072] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc073] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc086] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc087] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc0ac] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc0ad] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc0ae] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xc0af] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xcca9] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xe414] = KEX_ECDHE_ECDSA
+    cipherKeyExgMthod[0xe415] = KEX_ECDHE_ECDSA
+    --    return KEX_ECDHE_ECDSA;
+    cipherKeyExgMthod[0xc033] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc034] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc035] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc036] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc037] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc038] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc039] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc03a] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc03b] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc09a] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xc09b] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xccac] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xe418] = KEX_ECDHE_PSK
+    cipherKeyExgMthod[0xe419] = KEX_ECDHE_PSK
+    --    return KEX_ECDHE_PSK;
+    cipherKeyExgMthod[0xc010] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc011] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc012] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc013] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc014] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc027] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc028] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc02f] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc030] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc076] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc077] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc08a] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xc08b] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xcca8] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xe412] = KEX_ECDHE_RSA
+    cipherKeyExgMthod[0xe413] = KEX_ECDHE_RSA
+    --    return KEX_ECDHE_RSA;
+    cipherKeyExgMthod[0x001e] = KEX_KRB5
+    cipherKeyExgMthod[0x001f] = KEX_KRB5
+    cipherKeyExgMthod[0x0020] = KEX_KRB5
+    cipherKeyExgMthod[0x0021] = KEX_KRB5
+    cipherKeyExgMthod[0x0022] = KEX_KRB5
+    cipherKeyExgMthod[0x0023] = KEX_KRB5
+    cipherKeyExgMthod[0x0024] = KEX_KRB5
+    cipherKeyExgMthod[0x0025] = KEX_KRB5
+    cipherKeyExgMthod[0x0026] = KEX_KRB5
+    cipherKeyExgMthod[0x0027] = KEX_KRB5
+    cipherKeyExgMthod[0x0028] = KEX_KRB5
+    cipherKeyExgMthod[0x0029] = KEX_KRB5
+    cipherKeyExgMthod[0x002a] = KEX_KRB5
+    cipherKeyExgMthod[0x002b] = KEX_KRB5
+    --    return KEX_KRB5;
+    cipherKeyExgMthod[0x002c] = KEX_PSK
+    cipherKeyExgMthod[0x008a] = KEX_PSK
+    cipherKeyExgMthod[0x008b] = KEX_PSK
+    cipherKeyExgMthod[0x008c] = KEX_PSK
+    cipherKeyExgMthod[0x008d] = KEX_PSK
+    cipherKeyExgMthod[0x00a8] = KEX_PSK
+    cipherKeyExgMthod[0x00a9] = KEX_PSK
+    cipherKeyExgMthod[0x00ae] = KEX_PSK
+    cipherKeyExgMthod[0x00af] = KEX_PSK
+    cipherKeyExgMthod[0x00b0] = KEX_PSK
+    cipherKeyExgMthod[0x00b1] = KEX_PSK
+    cipherKeyExgMthod[0xc064] = KEX_PSK
+    cipherKeyExgMthod[0xc065] = KEX_PSK
+    cipherKeyExgMthod[0xc08e] = KEX_PSK
+    cipherKeyExgMthod[0xc08f] = KEX_PSK
+    cipherKeyExgMthod[0xc094] = KEX_PSK
+    cipherKeyExgMthod[0xc095] = KEX_PSK
+    cipherKeyExgMthod[0xc0a4] = KEX_PSK
+    cipherKeyExgMthod[0xc0a5] = KEX_PSK
+    cipherKeyExgMthod[0xc0a8] = KEX_PSK
+    cipherKeyExgMthod[0xc0a9] = KEX_PSK
+    cipherKeyExgMthod[0xccab] = KEX_PSK
+    cipherKeyExgMthod[0xe416] = KEX_PSK
+    cipherKeyExgMthod[0xe417] = KEX_PSK
+    --    return KEX_PSK;
+    cipherKeyExgMthod[0x0001] = KEX_RSA
+    cipherKeyExgMthod[0x0002] = KEX_RSA
+    cipherKeyExgMthod[0x0003] = KEX_RSA
+    cipherKeyExgMthod[0x0004] = KEX_RSA
+    cipherKeyExgMthod[0x0005] = KEX_RSA
+    cipherKeyExgMthod[0x0006] = KEX_RSA
+    cipherKeyExgMthod[0x0007] = KEX_RSA
+    cipherKeyExgMthod[0x0008] = KEX_RSA
+    cipherKeyExgMthod[0x0009] = KEX_RSA
+    cipherKeyExgMthod[0x000a] = KEX_RSA
+    cipherKeyExgMthod[0x002f] = KEX_RSA
+    cipherKeyExgMthod[0x0035] = KEX_RSA
+    cipherKeyExgMthod[0x003b] = KEX_RSA
+    cipherKeyExgMthod[0x003c] = KEX_RSA
+    cipherKeyExgMthod[0x003d] = KEX_RSA
+    cipherKeyExgMthod[0x0041] = KEX_RSA
+    cipherKeyExgMthod[0x0060] = KEX_RSA
+    cipherKeyExgMthod[0x0061] = KEX_RSA
+    cipherKeyExgMthod[0x0062] = KEX_RSA
+    cipherKeyExgMthod[0x0064] = KEX_RSA
+    cipherKeyExgMthod[0x0084] = KEX_RSA
+    cipherKeyExgMthod[0x0096] = KEX_RSA
+    cipherKeyExgMthod[0x009c] = KEX_RSA
+    cipherKeyExgMthod[0x009d] = KEX_RSA
+    cipherKeyExgMthod[0x00ba] = KEX_RSA
+    cipherKeyExgMthod[0x00c0] = KEX_RSA
+    cipherKeyExgMthod[0xc07a] = KEX_RSA
+    cipherKeyExgMthod[0xc07b] = KEX_RSA
+    cipherKeyExgMthod[0xc09c] = KEX_RSA
+    cipherKeyExgMthod[0xc09d] = KEX_RSA
+    cipherKeyExgMthod[0xc0a0] = KEX_RSA
+    cipherKeyExgMthod[0xc0a1] = KEX_RSA
+    cipherKeyExgMthod[0xe410] = KEX_RSA
+    cipherKeyExgMthod[0xe411] = KEX_RSA
+    cipherKeyExgMthod[0xfefe] = KEX_RSA
+    cipherKeyExgMthod[0xfeff] = KEX_RSA
+    cipherKeyExgMthod[0xffe0] = KEX_RSA
+    cipherKeyExgMthod[0xffe1] = KEX_RSA
+    --    return KEX_RSA;
+    cipherKeyExgMthod[0x002e] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x0092] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x0093] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x0094] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x0095] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00ac] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00ad] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00b6] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00b7] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00b8] = KEX_RSA_PSK
+    cipherKeyExgMthod[0x00b9] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xc092] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xc093] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xc098] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xc099] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xccae] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xe41a] = KEX_RSA_PSK
+    cipherKeyExgMthod[0xe41b] = KEX_RSA_PSK
+    --    return KEX_RSA_PSK;
+    cipherKeyExgMthod[0xc01a] = KEX_SRP_SHA
+    cipherKeyExgMthod[0xc01d] = KEX_SRP_SHA
+    cipherKeyExgMthod[0xc020] = KEX_SRP_SHA
+    --    return KEX_SRP_SHA;
+    cipherKeyExgMthod[0xc01c] = KEX_SRP_SHA_DSS
+    cipherKeyExgMthod[0xc01f] = KEX_SRP_SHA_DSS
+    cipherKeyExgMthod[0xc022] = KEX_SRP_SHA_DSS
+    --    return KEX_SRP_SHA_DSS;
+    cipherKeyExgMthod[0xc01b] = KEX_SRP_SHA_RSA
+    cipherKeyExgMthod[0xc01e] = KEX_SRP_SHA_RSA
+    cipherKeyExgMthod[0xc021] = KEX_SRP_SHA_RSA
+    --    return KEX_SRP_SHA_RSA;
+    cipherKeyExgMthod[0xc0ff] = KEX_ECJPAKE
+	--    return KEX_ECJPAKE;
+	
+	cipherKeyExgMthod[0xe001] = KEX_ECDHE_ECDSA
+	cipherKeyExgMthod[0xe003] = KEX_ECDHE_ECDSA
+	cipherKeyExgMthod[0xe011] = KEX_ECDHE_ECDSA
+	cipherKeyExgMthod[0xe013] = KEX_ECDHE_ECDSA
+
+	cipherKeyExgMthod[0xe009] = KEX_RSA
+	cipherKeyExgMthod[0xe00a] = KEX_RSA
+	cipherKeyExgMthod[0xe019] = KEX_RSA
+	cipherKeyExgMthod[0xe01a] = KEX_RSA
+
+	cipherKeyExgMthod[0xe005] = KEX_IBSDH
+	cipherKeyExgMthod[0xe007] = KEX_IBC
+	cipherKeyExgMthod[0xe015] = KEX_IBSDH
+	cipherKeyExgMthod[0xe017] = KEX_IBC
 end
 -- register this dissector
 DissectorTable.get("tcp.port"):add(PORT, GMSSL)
