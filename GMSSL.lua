@@ -279,29 +279,9 @@ function parseClientHello(tvb, pinfo, tree)
 		subtree:add(fields.helloCompessMethod, tvb(offset, compressMethodLen))
 		offset = offset + compressMethodLen
 	end
-	if (offset >= tvb:len())
-	then
-		return offset
-	end
-	if (tvb:len() - offset > 4)
-	then
-		local content = tvb(offset, 1):uint()
-		local ver = tvb(offset + 1, 2):uint()
-		--Next Content is Not Extensions. Also Handshake Protocol
-		if (content == 0x16 and ver == 0x0101)
-		then
-			return offset
-		end
-	end
-
-	local extensionLen = tvb(offset, 2):uint()	
-	subtree:add(fields.helloExtensionLen, tvb(offset, 2))
-	offset = offset + 2
-	if (extensionLen > 0)
-	then
-		subtree:add(fields.helloExtension, tvb(offset, extensionLen))
-		offset = offset + extensionLen
-	end
+	
+	local parseExtenOffset = parseExtensions(tvb(offset):tvb(), pinfo, subtree)
+	offset = offset + parseExtenOffset
 	return offset
 end
 
@@ -354,31 +334,9 @@ function parseServerHello(tvb, pinfo, tree)
 		offset = offset + compressMethodLen
 	end
 
-	if (offset >= tvb:len())
-	then
-		return offset;
-	end
 	-- Next Maybe Not Extensions.
-	if (tvb:len() - offset > 4)
-	then
-		local content = tvb(offset, 1):uint()
-		local ver = tvb(offset + 1, 2):uint()
-		--Next Content is Not Extensions. Also Handshake Protocol
-		if (content == 0x16 and ver == 0x0101)
-		then
-			return offset
-		end
-	end
-	
-	local extensionLen = tvb(offset, 2):uint()	
-	subtree:add(fields.helloExtensionLen, tvb(offset, 2))
-	offset = offset + 2
-	if (extensionLen > 0)
-	then
-		subtree:add(fields.helloExtension, tvb(offset, extensionLen))
-		offset = offset + extensionLen
-	end
-
+	local parseExtenOffset = parseExtensions(tvb(offset):tvb(), pinfo, subtree)
+	offset = offset + parseExtenOffset
 	return offset
 end
 
@@ -484,6 +442,36 @@ function parseCertificateverify(tvb, pinfo, tree)
 
 	subtree:add(fields.certVerifyData, tvb(offset, lengs)):append_text(": CertVerifyData")
 	offset = offset + lengs
+	return offset
+end
+
+-- Parse Extensions, Maybe Have No extensions.
+-- Before parse, We must detect the head.
+function parseExtensions(tvb, pinfo, tree)
+	if (tvb:len() < 1)
+	then
+		return 0
+	end
+	if (tvb:len() > 4)
+	then
+		local content = tvb(0, 1):uint() -- Try to parse it as content.
+		local ver = tvb(1, 2):uint() -- Try to parse it as Version.
+		--Next Content is Not Extensions. Also Handshake Protocol
+		if (content == 0x16 and ver == 0x0101)
+		then
+			return 0 -- No Extensions and other type parsed.
+		end
+	end
+	-- Now, The buf is extensions.
+	local offset = 0
+	local extensionLen = tvb(offset, 2):uint()	
+	tree:add(fields.helloExtensionLen, tvb(offset, 2))
+	offset = offset + 2
+	if (extensionLen > 0)
+	then
+		tree:add(fields.helloExtension, tvb(offset, extensionLen))
+		offset = offset + extensionLen
+	end
 	return offset
 end
 
