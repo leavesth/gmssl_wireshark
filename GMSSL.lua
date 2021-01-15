@@ -7,33 +7,44 @@ local NAME = "GMSSL"
 local PORT = 443
 local GMSSL = Proto(NAME, "GMSSL Protocol")
 
+local cuiteTable = {}  -- Cipher Suite Tables
+local extenTable = {}  -- Extensions Tables
+local compMethod = {}  -- Compression Methods Tables
+
 local fields = GMSSL.fields
 fields.ContentType = ProtoField.uint8 (NAME .. ".ContentType", "ContentType")
-fields.MajorVersion = ProtoField.uint8 (NAME .. ".MajorVersion", "MajorVersion")
-fields.MinorVersion = ProtoField.uint8 (NAME .. ".MinorVersion", "MinorVersion")
+fields.version = ProtoField.string (NAME .. ".Version", "Version")
 fields.length = ProtoField.uint16(NAME .. ".length", "Length")
 
+fields.type16 = ProtoField.uint16(NAME .. ".Type16", "Type")
+fields.length16 = ProtoField.uint16(NAME .. ".Length16", "Length")
+
+fields.handshakeProtol = ProtoField.string(NAME .. ".HandShakeProtol", "Handhake Protocol: ")
+fields.handshakeType = ProtoField.string(NAME .. ".HandShakeType", "Handshake Type: ")
+
 fields.helloType = ProtoField.uint8(NAME .. ".Hello.Type", "Hello")
-fields.helloLength = ProtoField.uint24(NAME .. ".Hello.Length", "Length")
-fields.helloMajorVersion = ProtoField.uint8(NAME .. ".Hello.MajorVersion", "MajorVersion")
-fields.helloMinorVersion = ProtoField.uint8(NAME .. ".Hello.MinorVersion", "MinorVersion")
+
 fields.helloTime = ProtoField.uint32(NAME .. ".Hello.Time", "Time")
 fields.helloRand = ProtoField.bytes(NAME .. ".Hello.Random", "Random")
 fields.helloSesIdLen = ProtoField.uint8(NAME .. ".Hello.SesIdLen", "SessionIdLen")
 fields.helloSesId = ProtoField.bytes(NAME .. ".Hello.SesId", "SessionId")
 
-fields.helloCipherSuiteLen = ProtoField.uint16(NAME .. ".Hello.CipherSuiteLen", "CipherSuiteLen")
-fields.helloCipherSuite = ProtoField.string(NAME .. ".Hello.CipherSuite", "CipherSuite")
-fields.helloCipherSuiteValue = ProtoField.uint16(NAME .. ".Hello.CipherSuite.CipherSuiteValue", "CipherSuite")
+fields.cipherSuiteLen = ProtoField.uint16(NAME .. ".CipherSuiteLen", "Cipher Suites Length")
+fields.cipherSuite = ProtoField.string(NAME .. ".CipherSuite", "Cipher Suites")
+fields.cipherSuiteValue = ProtoField.string(NAME .. ".CipherSuiteValue", "Cipher Suite")
 
-fields.helloCompessMethodLen = ProtoField.uint8(NAME .. ".Hello.CompressMethodLen", "COmpressMethodLen")
-fields.helloCompessMethod = ProtoField.bytes(NAME .. ".Hello.CompressMethod", "CompressMethod")
+fields.compessMethodLen = ProtoField.uint8(NAME .. ".CompressMethodLen", "Compression Methods Length")
+fields.compessMethods = ProtoField.string(NAME .. ".CompressMethod", "Compress Methods")
+fields.compessMethod = ProtoField.string(NAME .. ".CompressMethod", "Compress Method")
 
 fields.helloExtensionLen = ProtoField.uint16(NAME .. ".Hello.ExtensionLen", "ExtensionLen")
 fields.helloExtension = ProtoField.bytes(NAME .. ".Hello.Extension", "Extension")
 
-fields.helloCertLen = ProtoField.uint24(NAME .. ".Hello.CertLen", "CertLen")
-fields.helloCert = ProtoField.bytes(NAME .. ".Hello.CertLen", "CertLen")
+fields.extensionMain = ProtoField.string(NAME .. ".Hello.extensionMain", "Extension")
+
+fields.certNode = ProtoField.string(NAME .. ".CertNode", "Certificate")
+fields.certLen = ProtoField.uint24(NAME .. ".CertLen", "Certificate Length")
+fields.cert = ProtoField.bytes(NAME .. ".Cert", "Cert")
 
 fields.keyExchangeLen = ProtoField.uint24(NAME .. ".Hello.KeyExchangeLen", "KeyExchangeLen")
 fields.keyExchange = ProtoField.bytes(NAME .. ".Hello.KeyExchange", "KeyExchange")
@@ -62,8 +73,11 @@ fields.alertData = ProtoField.bytes(NAME .. ".AlertData", "AlertData")
 
 --local clientHello = GMSSL.fields.clientHello
 
+
 -- dissect packet
 function GMSSL.dissector (tvb, pinfo, tree)
+	initTables()
+
 	local offset = 0
 	local isgm = 0
 	isgm = tvb(1, 2)
@@ -83,30 +97,25 @@ function GMSSL.dissector (tvb, pinfo, tree)
 	while (offset < tvb:len())
 	do
 		local type = tvb(offset, 1)
-		local subtree = maintree:add(GMSSL, tvb())
-
-		subtree:add(fields.ContentType, type)
+		local startOffset = offset
 		local contentType = "Hello"
 		local dataType = type:uint()
 		
-		offset = offset + 1	
-		type = tvb(offset, 1)
-		subtree:add(fields.MajorVersion, type)
-		local majorVersion = type
-
-		offset = offset + 1	
-		type = tvb(offset, 1)
-		local minorVersion = type
-		local verStr = 
-		subtree:add(fields.MinorVersion, type):append_text(string.format(": Version: %d.%d", majorVersion:uint(), minorVersion:uint()))
-	
-	
 		offset = offset + 1
-		type = tvb(offset, 2)
-		subtree:add(fields.length, type):append_text(": DataLength")
-		subtree:append_text(", Length: " .. type:uint())
-
+		local majorVersion = tvb(offset, 1)
+		local minorVersion = tvb(offset + 1, 1)
+		local versions = tvb(offset, 2)
+		
 		offset = offset + 2
+		local dataLength = tvb(offset, 2)
+		offset = offset + 2
+
+		local subtree = maintree:add(GMSSL, tvb(startOffset, dataLength:uint() + 5))
+		subtree:add(fields.ContentType, type)
+		subtree:add(fields.version, tvb(offset, 2), string.format("GMSSL %d.%d (0x%04X)", majorVersion:uint(), minorVersion:uint(), versions:uint()))
+		subtree:add(fields.length, dataLength)
+
+		type = dataLength -- The Next Code use type....
 
 		if(dataType == 22)
 		then
@@ -226,22 +235,21 @@ function GMSSL.dissector (tvb, pinfo, tree)
 end
 
 function parseClientHello(tvb, pinfo, tree) 
-	local subtree = tree:add_le("ClientHello")
+	--local subtree = tree:add_le("ClientHello")
 	--subtree:append_text("subtree:ClientHello")
 	local offset = 0
 	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": ClientHello")
 	offset = offset + 1
 	local length = tvb(offset, 3)
-	subtree:add(fields.helloLength, length):append_text(": HelloLength")
 	offset = offset + 3
 
-	local majorVersion = tvb(offset, 1)
-	offset = offset + 1
-	local minorVersion = tvb(offset, 1)
-	offset = offset + 1
-	subtree:add(fields.helloMajorVersion, majorVersion)
-	subtree:add(fields.helloMinorVersion, minorVersion):append_text(": 协议版本:" .. string.format("%d.%d", majorVersion:uint(), minorVersion:uint()))
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + length:uint()), "ClientHello")
+
+	subtree:add(fields.handshakeType, type, string.format("Client hello (%d)", type:uint()))
+	subtree:add(fields.length, length)
+
+	subtree:add(fields.version, tvb(offset, 2), string.format("GMSSL %d.%d (0x%04X)", tvb(offset, 1):uint(), tvb(offset + 1, 1):uint(), tvb(offset, 2):uint()))
+	offset = offset + 2
 	-- 随机数
 	local times = tvb(offset, 4)
 	offset = offset + 4
@@ -253,32 +261,26 @@ function parseClientHello(tvb, pinfo, tree)
 	-- 检测是否有SessionID
 	local sessionIdLen = tvb(offset, 1):uint()
 	offset = offset + 1
-	subtree:add(fields.helloSesIdLen, sessionIdLen)
+	subtree:add(fields.helloSesIdLen, tvb(offset, 1))
 	if (sessionIdLen > 0)
 	then
 		subtree:add(fields.helloSesId, tvb(offset, sessionIdLen))
 		offset = offset + sessionIdLen
 	end
 	local cipherSuiteLen = tvb(offset, 2):uint()
-	subtree:add(fields.helloCipherSuiteLen, cipherSuiteLen)
+	subtree:add(fields.cipherSuiteLen, tvb(offset, 2))
 	offset = offset + 2
 	if (cipherSuiteLen >= 2)
 	then
-		stree = subtree:add(fields.helloCipherSuite,string.format("(%d) Suites", cipherSuiteLen / 2))
+		stree = subtree:add(fields.cipherSuite, tvb(offset, cipherSuiteLen), string.format("(%d) Suites", cipherSuiteLen / 2))
 		for indx = 1, cipherSuiteLen / 2, 1 do
-			stree:add(fields.helloCipherSuiteValue, tvb(offset, 2)):append_text(string.format(": 0x%04X:%s", tvb(offset, 2):uint(), getCipherSuite(tvb(offset, 2):uint())))
+			stree:add(fields.cipherSuiteValue, tvb(offset, 2), string.format("%s (0x%04X)", getCipherSuite(tvb(offset, 2):uint()), tvb(offset, 2):uint()))
 			offset = offset + 2
 		end
 	end
 	-- compress
-	subtree:add(fields.helloCompessMethodLen, tvb(offset, 1))	
-	local compressMethodLen = tvb(offset, 1):uint()
-	offset = offset + 1
-	if (compressMethodLen > 0)
-	then
-		subtree:add(fields.helloCompessMethod, tvb(offset, compressMethodLen))
-		offset = offset + compressMethodLen
-	end
+	local parseCompressOffset = parseCompressions(tvb(offset):tvb(), pinfo, subtree)
+	offset = offset + parseCompressOffset
 	
 	local parseExtenOffset = parseExtensions(tvb(offset):tvb(), pinfo, subtree)
 	offset = offset + parseExtenOffset
@@ -287,22 +289,21 @@ end
 
 -- parse Server Hello
 function parseServerHello(tvb, pinfo, tree)
-	local subtree = tree:add_le("ServerHello")
+	
 	--subtree:append_text("subtree:ClientHello")
 	local offset = 0
 	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": ServerHello")
 	offset = offset + 1
 	local length = tvb(offset, 3)
-	subtree:add(fields.helloLength, length):append_text(": ServerHelloLength")
+
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + length:uint()), "ServerHello")
+	subtree:add(fields.handshakeType, type, string.format("Server hello (%d)", type:uint()))
+	subtree:add(fields.length, length)
 	offset = offset + 3
 
-	local majorVersion = tvb(offset, 1)
-	offset = offset + 1
-	local minorVersion = tvb(offset, 1)
-	offset = offset + 1
-	subtree:add(fields.helloMajorVersion, majorVersion)
-	subtree:add(fields.helloMinorVersion, minorVersion):append_text(": 协议版本:" .. string.format("%d.%d", majorVersion:uint(), minorVersion:uint()))
+	subtree:add(fields.version, tvb(offset, 2), string.format("GMSSL %d.%d (0x%04X)", tvb(offset, 1):uint(), tvb(offset + 1, 1):uint(), tvb(offset, 2):uint()))
+	offset = offset + 2
+
 	-- 随机数
 	local times = tvb(offset, 4)
 	offset = offset + 4
@@ -312,60 +313,81 @@ function parseServerHello(tvb, pinfo, tree)
 	offset = offset + 28
 
 	-- 检测是否有SessionID
-	local sessionIdLen = tvb(offset, 1):uint()
+	local sessionIdLen = tvb(offset, 1):uint()	
+	subtree:add(fields.helloSesIdLen, tvb(offset, 1))
 	offset = offset + 1
-	subtree:add(fields.helloSesIdLen, sessionIdLen)
 	if (sessionIdLen > 0)
 	then
 		subtree:add(fields.helloSesId, tvb(offset, sessionIdLen))
 		offset = offset + sessionIdLen
 	end
 	local cipherSuite = tvb(offset, 2):uint()
-	subtree:add(fields.helloCipherSuite, cipherSuite):append_text(string.format(": 0x%04X:%s", cipherSuite, getCipherSuite(cipherSuite)))
+	subtree:add(fields.cipherSuite, tvb(offset, 2), string.format("%s (0x%04X)", getCipherSuite(cipherSuite), cipherSuite))
 	offset = offset + 2
 	
-	-- compress
-	subtree:add(fields.helloCompessMethodLen, tvb(offset, 1))	
-	local compressMethodLen = tvb(offset, 1):uint()
+	-- selected compress methods.
+	subtree:add(fields.compessMethod, tvb(offset, 1), getCompressMethodById(tvb(offset, 1):uint()))
 	offset = offset + 1
-	if (compressMethodLen > 0)
-	then
-		subtree:add(fields.helloCompessMethod, tvb(offset, compressMethodLen))
-		offset = offset + compressMethodLen
-	end
-
+	
 	-- Next Maybe Not Extensions.
 	local parseExtenOffset = parseExtensions(tvb(offset):tvb(), pinfo, subtree)
 	offset = offset + parseExtenOffset
 	return offset
 end
 
+function parseCompressions(tvb, pinfo, tree)
+	local offset = 0
+	tree:add(fields.compessMethodLen, tvb(offset, 1))
+	local compressMethodLen = tvb(offset, 1):uint()
+	offset = offset + 1
+	local compMethodTree = tree:add(fields.compessMethods, tvb(offset, compressMethodLen), string.format("(%d methods)", compressMethodLen))
+	if (compressMethodLen > 0)
+	then
+		for indx = 1, compressMethodLen, 1 do
+			local compMethodId = tvb(offset, 1):uint()
+			compMethodTree:add(fields.compessMethod, tvb(offset, 1), getCompressMethodById(compMethodId))
+			offset = offset + 1
+		end
+	end
+	return offset
+end
+
+function getCompressMethodById(compMethodId)
+	if (nil == compMethod[compMethodId])
+	then
+		return string.format("Unknown Compress Method (%d)", compMethodId)
+	end
+	return string.format("%s (%d)", compMethod[compMethodId], compMethodId)
+end
 
 function parseCertficate(tvb, pinfo, tree)
 	local offset = 0
-
-	local subtree = tree:add_le("Certificate")
 	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": Certficate")
 	offset = offset + 1
 	-- Total Length
-	local totalLen = tvb(offset, 3):uint()	
-	subtree:add(fields.helloCertLen, tvb(offset, 3)):append_text(": DataLength")
+	local totalLen = tvb(offset, 3)
 	offset = offset + 3
 
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + totalLen:uint()), "Certificate")
+
+	subtree:add(fields.handshakeType, type, string.format("Certificate (%d)", type:uint()))
+	subtree:add(fields.length, totalLen)
+
+
 	local cert0Len = tvb(offset, 3):uint()
-	subtree:add(fields.helloCertLen, tvb(offset, 3)):append_text(": CertLength")
+	subtree:add(fields.certLen, tvb(offset, 3))
 	offset = offset + 3
 
 	local paseLens = 0
 	while(paseLens < cert0Len)
 	do
 		-- parse one certs.
-		stree = subtree:add(fields.helloCert,string.format("One Certs"))
-		stree:add(fields.helloCertLen, tvb(offset, 3))
+		
 		local onecertLen = tvb(offset, 3):uint()
+		local stree = subtree:add(fields.certNode, tvb(offset, onecertLen), string.format("(%d bytes)", onecertLen))
+		stree:add(fields.certLen, tvb(offset, 3))
 		offset = offset + 3
-		stree:add(fields.helloCert, tvb(offset, onecertLen))
+		stree:add(fields.cert, tvb(offset, onecertLen))
 		offset = offset + onecertLen
 
 		paseLens = paseLens + 3 + onecertLen
@@ -375,16 +397,18 @@ end
 
 function parseServerKeyExchange(tvb, pinfo, tree)
 	local offset = 0
-	local subtree = tree:add_le("ServerKeyExchange")
+	--local subtree = tree:add_le("ServerKeyExchange")
+	
 	local type = tvb(offset, 1)
-	subtree:add(fields.helloType, type):append_text(": ServerKeyExchange")
-	offset = offset + 1
+	local lengs = tvb(offset + 1, 3):uint()
+	offset = offset + 4
 
-	local lengs = tvb(offset, 3):uint()
-	subtree:add(fields.keyExchangeLen, tvb(offset, 3)):append_text(": Length")
-	offset = offset + 3
+	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + lengs), "Server Key Exchange")
 
-	subtree:add(fields.keyExchange, tvb(offset, lengs)):append_text(": Length")
+	subtree:add(fields.handshakeType, type, string.format("ServerKeyExchange (%d)", type:uint()))
+	subtree:add(fields.length, lengs)
+
+	subtree:add(fields.keyExchange, tvb(offset, lengs))
 	offset = offset + lengs
 	return offset
 end
@@ -464,20 +488,62 @@ function parseExtensions(tvb, pinfo, tree)
 	end
 	-- Now, The buf is extensions.
 	local offset = 0
-	local extensionLen = tvb(offset, 2):uint()	
+	local extensionLen = tvb(offset, 2):uint()
 	tree:add(fields.helloExtensionLen, tvb(offset, 2))
 	offset = offset + 2
 	if (extensionLen > 0)
 	then
-		tree:add(fields.helloExtension, tvb(offset, extensionLen))
+		-- Extension format is type:2 length: 2 ExtenData
+		splitExtensions(tvb(offset, extensionLen):tvb(), pinfo, tree)
+		--tree:add(fields.helloExtension, tvb(offset, extensionLen))
 		offset = offset + extensionLen
 	end
 	return offset
 end
+function splitExtensions(tvb, pinfo, tree)
+	local offset = 0
+	local buflen = tvb:len()
+	while(offset < buflen)
+	do
+		local extenType = tvb(offset, 2):uint()
+		local extenLen = tvb(offset + 2, 2):uint()
+		local subExtenTree = tree:add(fields.extensionMain, tvb(offset, 4 + extenLen), string.format("%s (len=%d)", getExtensionType(extenType), extenLen))
+		subExtenTree:add(fields.type16, tvb(offset, 2))
+		subExtenTree:add(fields.length16, tvb(offset + 2, 2))
+		offset = offset + 4
+		if (extenLen > 0)
+		then
+			subExtenTree:add(fields.helloExtension, tvb(offset, extenLen))
+		end
+		offset = offset + extenLen
+	end
 
+	return offset
+end
+
+--Get The Extension Type
+function getExtensionType(extenType)	
+	local retStr = extenTable[extenType]
+	if (retStr == nil)
+	then
+		return "Unknown"
+	end
+	return retStr
+end
 -- Get cipher suite by Cipher ID.
-function getCipherSuite(cuiteId)
-	local cuiteTable = {}
+
+function getCipherSuite(cuiteId)	
+	local retStr = cuiteTable[cuiteId]
+	if (retStr == nil)
+	then
+		return "NotFound CipherSuite"
+	end
+	return retStr
+end
+
+function initTables()
+	-- Cipher Suite Tables.
+
 	cuiteTable[0x0001] = "TLS_RSA_WITH_NULL_MD5"
     cuiteTable[0x0002] = "TLS_RSA_WITH_NULL_SHA"
     cuiteTable[0x0003] = "TLS_RSA_EXPORT_WITH_RC4_40_MD5"
@@ -893,13 +959,77 @@ function getCipherSuite(cuiteId)
     cuiteTable[0xE017] = "TLS1_CK_IBC_WITH_SM4_SM3"
     cuiteTable[0xE019] = "TLS1_CK_RSA_WITH_SM4_SM3"
 	cuiteTable[0xE01A] = "TLS1_CK_RSA_WITH_SM4_SHA1"
-	
-	local retStr = cuiteTable[cuiteId]
-	if (retStr == nil)
-	then
-		return "NotFound CipherSuite"
-	end
-	return retStr
+
+
+	extenTable[0] = "server_name"
+	extenTable[1] = "max_fragment_length"
+	extenTable[2] = "client_certificate_url"
+	extenTable[3] = "trusted_ca_keys"
+	extenTable[4] = "truncated_hmac"
+	extenTable[5] = "status_request"
+	extenTable[6] = "user_mapping"
+	extenTable[7] = "client_authz"
+	extenTable[8] = "server_authz"
+	extenTable[9] = "cert_type"
+	extenTable[10] = "supported_groups"
+	extenTable[11] = "ec_point_formats"
+	extenTable[12] = "srp"
+	extenTable[13] = "signature_algorithms"
+	extenTable[14] = "use_srtp"
+	extenTable[15] = "heartbeat"
+	extenTable[16] = "application_layer_protocol_negotiation"
+	extenTable[17] = "status_request_v2"
+	extenTable[18] = "signed_certificate_timestamp"
+	extenTable[19] = "client_certificate_type"
+	extenTable[20] = "server_certificate_type"
+	extenTable[21] = "padding"
+	extenTable[22] = "encrypt_then_mac"
+	extenTable[23] = "extended_master_secret"
+	extenTable[24] = "token_binding"
+	extenTable[25] = "cached_info"
+	extenTable[27] = "compress_certificate"
+	extenTable[28] = "record_size_limit"
+	extenTable[35] = "session_ticket"
+	extenTable[40] = "Reserved (key_share)"
+	extenTable[41] = "pre_shared_key"
+	extenTable[42] = "early_data"
+	extenTable[43] = "supported_versions"
+	extenTable[44] = "cookie"
+	extenTable[45] = "psk_key_exchange_modes"
+	extenTable[46] = "Reserved (ticket_early_data_info)"
+	extenTable[47] = "certificate_authorities"
+	extenTable[48] = "oid_filters"
+	extenTable[49] = "post_handshake_auth"
+	extenTable[50] = "signature_algorithms_cert"
+	extenTable[51] = "key_share"
+	extenTable[53] = "connection_id"
+	extenTable[2570] = "Reserved (GREASE)"
+	extenTable[6682] = "Reserved (GREASE)"
+	extenTable[10794] = "Reserved (GREASE)"
+	extenTable[13172] = "next_protocol_negotiation"
+	extenTable[14906] = "Reserved (GREASE)"
+	extenTable[19018] = "Reserved (GREASE)"
+	extenTable[23130] = "Reserved (GREASE)"
+	extenTable[27242] = "Reserved (GREASE)"
+	extenTable[30031] = "channel_id_old"
+	extenTable[30032] = "channel_id"
+	extenTable[65281] = "renegotiation_info"
+	extenTable[31354] = "Reserved (GREASE)"
+	extenTable[35466] = "Reserved (GREASE)"
+	extenTable[39578] = "Reserved (GREASE)"
+	extenTable[43690] = "Reserved (GREASE)"
+	extenTable[47802] = "Reserved (GREASE)"
+	extenTable[51914] = "Reserved (GREASE)"
+	extenTable[56026] = "Reserved (GREASE)"
+	extenTable[60138] = "Reserved (GREASE)"
+	extenTable[64250] = "Reserved (GREASE)"
+	extenTable[65445] = "quic_transport_parameters"
+	extenTable[65486] = "encrypted_server_name"
+
+	-- Compression Methods Table
+	compMethod[0] = "null"
+	compMethod[1] = "DEFLATE"
+	compMethod[64] = "LZS"
 end
 -- register this dissector
 DissectorTable.get("tcp.port"):add(PORT, GMSSL)
