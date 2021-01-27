@@ -94,7 +94,7 @@ function GMSSL.dissector (tvb, pinfo, tree)
 
 		local subtree = maintree:add(GMSSL, tvb(startOffset, dataLength:uint() + 5))
 		subtree:add(fields.ContentType, type)
-		subtree:add(fields.version, tvb(offset, 2), string.format("GMSSL %d.%d (0x%04X)", majorVersion:uint(), minorVersion:uint(), versions:uint()))
+		subtree:add(fields.version, versions, string.format("GMSSL %d.%d (0x%04X)", majorVersion:uint(), minorVersion:uint(), versions:uint()))
 		subtree:add(fields.length, dataLength)
 
 		type = dataLength -- The Next Code use type....
