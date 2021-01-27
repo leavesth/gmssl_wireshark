@@ -92,7 +92,8 @@ function GMSSL.dissector (tvb, pinfo, tree)
 		local dataLength = tvb(offset, 2)
 		offset = offset + 2
 
-		local subtree = maintree:add(GMSSL, tvb(startOffset, dataLength:uint() + 5))
+        --local subtree = maintree:add(GMSSL, tvb(startOffset, dataLength:uint() + 5))
+        local subtree = maintree:add(GMSSL, tvb(startOffset))
 		subtree:add(fields.ContentType, type)
 		subtree:add(fields.version, versions, string.format("GMSSL %d.%d (0x%04X)", majorVersion:uint(), minorVersion:uint(), versions:uint()))
 		subtree:add(fields.length, dataLength)
@@ -111,7 +112,8 @@ function GMSSL.dissector (tvb, pinfo, tree)
 		elseif (dataType == 23)
 		then
 			contentType = "ApplicationData"
-			subtree:add(fields.applicationData, tvb(offset, type:uint()))
+            --subtree:add(fields.applicationData, tvb(offset, type:uint()))
+            subtree:add(fields.applicationData, tvb(offset))
 			offset = offset + type:uint()
 			infoMsg = infoMsg .. "Application Data;"
 		elseif (dataType == 80)
