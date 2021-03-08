@@ -3,6 +3,11 @@ Wireshark Lua dissector script for gmssl protocol.国密SSL的wireshark解析脚
 
 Any types May not implemented. We are constantly updating the dissector. Include the code-style, gmssl protocol, and so on.
 
+If GMSSL Not work. Remove the Wireshark Configure directory, In Windows, Directory is:  %USERPROFILE%\AppData\Roaming\Wireshark
+
+如果 Wireshark 无法使用GMSSL解析协议，备份并删除Wireshark的配置目录，在Windows系统，该目录一般在 %USERPROFILE%\AppData\Roaming\Wireshark
+如: C:\Users\Administrator\AppData\Roaming\Wireshark
+
 # How to use it?
 ## 1st. step
    Put the **GMSSL.lua** in the wireshark Install directory.  Which contains **init.lua**
