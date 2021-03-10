@@ -57,25 +57,42 @@ fields.encryptedHelloData = ProtoField.string(NAME .. ".EncryptedHelloData", "Ha
 fields.alertData = ProtoField.bytes(NAME .. ".AlertData", "AlertData")
 
 -- dissect packet
-function GMSSL.dissector (tvb, pinfo, tree)
-	initTables()
+function GMSSL.dissector(tvb, pinfo, tree)
+    if (tvb:len() < 5)
+    then
+        pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
+        pinfo.desegment_offset = 0
+        return DESEGMENT_ONE_MORE_SEGMENT
+    end
+    initTables()
 
-	local offset = 0
+	local offset = pinfo.desegment_offset or 0
 	local isgm = 0
+    local datalens = 0
 	isgm = tvb(1, 2)
+    datalens = tvb(3, 2):uint()
+    local buflens = tvb:len()
+    if (buflens < datalens + 5)
+    then
+        pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
+        pinfo.desegment_offset = offset
+        return buflens
+    end
 	-- GMSSL version is 1.1
 	if (isgm:uint() ~= 0x0101)
 	then
-		Dissector.get("tls"):call(tvb, pinfo, tree) -- Decode as origial TLS
-		return
+		return Dissector.get("tls"):call(tvb, pinfo, tree) -- Decode as origial TLS		
 	end
 
 	local changeCipherOk = false
 	-- If GM ssl.
 	local maintree = tree:add(GMSSL, tvb())
 	pinfo.cols.protocol = GMSSL.name
+    pinfo.cols.packet_len = datalens + 5 -- Why It not work in wireshark ???
+
 	local parseoff = 0
 	local infoMsg = ""
+    
 	while (offset < tvb:len())
 	do
 		local type = tvb(offset, 1)
@@ -91,6 +108,16 @@ function GMSSL.dissector (tvb, pinfo, tree)
 		offset = offset + 2
 		local dataLength = tvb(offset, 2)
 		offset = offset + 2
+
+        if (tvb(offset):len() < dataLength:uint())
+        then
+            pinfo.cols.info = infoMsg
+
+            pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
+            pinfo.desegment_offset = offset - 5
+            return offset - 5
+            --return offset - 5 -- wait next packs...
+        end
 
         --local subtree = maintree:add(GMSSL, tvb(startOffset, dataLength:uint() + 5))
         local subtree = maintree:add(GMSSL, tvb(startOffset))
@@ -215,7 +242,14 @@ function GMSSL.dissector (tvb, pinfo, tree)
 		end
 	end
 
+    if (buflens ~= offset)
+    then
+        pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
+        pinfo.desegment_offset = offset
+        return offset
+    end
 	pinfo.cols.info = infoMsg
+    return offset
 end
 
 function parseClientHello(tvb, pinfo, tree) 
@@ -352,7 +386,8 @@ function parseCertficate(tvb, pinfo, tree)
 	local totalLen = tvb(offset, 3)
 	offset = offset + 3
 
-	local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + totalLen:uint()), "Certificate")
+	--local subtree = tree:add(fields.handshakeProtol, tvb(0, 4 + totalLen:uint()), "Certificate")
+    local subtree = tree:add(fields.handshakeProtol, tvb(), "Certificate")
 
 	subtree:add(fields.handshakeType, type, string.format("Certificate (%d)", type:uint()))
 	subtree:add(fields.length, totalLen)
@@ -366,10 +401,10 @@ function parseCertficate(tvb, pinfo, tree)
 	do
 		-- parse one certs.		
 		local onecertLen = tvb(offset, 3):uint()
-		local stree = subtree:add(fields.certNode, tvb(offset, onecertLen), string.format("(%d bytes)", onecertLen))
+		local stree = subtree:add(fields.certNode, tvb(offset), string.format("(%d bytes)", onecertLen))
 		stree:add(fields.certLen, tvb(offset, 3))
 		offset = offset + 3
-		stree:add(fields.cert, tvb(offset, onecertLen))
+		stree:add(fields.cert, tvb(offset))
 		offset = offset + onecertLen
 		paseLens = paseLens + 3 + onecertLen
 	end
